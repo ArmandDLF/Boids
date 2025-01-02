@@ -1,19 +1,22 @@
-
-#include <SDL2/SDL.h>
-#include "it_s_work.h"
-
 #include <iostream>
 #include <random>
 #include <vector>
 #include <cmath>
+#include <tuple>
+
+#include <SDL2/SDL.h>
 
 int const WIDTH = 800;
 int const HEIGHT = 600;
-float const PI = 3.1415927; // TODO: better PI
+
+class Object; // declaration
 
 struct global_t {
 	SDL_Window * window = NULL;
 	SDL_Renderer * renderer = NULL;
+
+	// Objects
+	std::vector<Object*> sceneObjects;
 
 	// random
 	std::random_device rd;
@@ -22,36 +25,90 @@ struct global_t {
 
 };
 
-global_t g;
+global_t w;
 
-void paint_it_s_work(int ox, int oy, int scale = 20) {
-	SDL_SetRenderDrawColor(g.renderer, 0u, 0u, 0u, SDL_ALPHA_OPAQUE);
-	for (int j = 0; j < px::height; ++j) {
-		for (int i = 0; i < px::width; ++i) {
-			if (px::header_data[j*px::width+i] == 0) {
-				SDL_Rect r = { i*scale+ox, j*scale+oy, 20, 20 };
-				SDL_RenderFillRect(g.renderer, &r);
-			}
+
+class Object {
+	protected:
+		float x;
+		float y;
+		int scale;
+		std::tuple<Uint8, Uint8, Uint8, Uint8> color;
+	public:
+		Object (float x, float y, int scale, std::tuple<Uint8, Uint8, Uint8, Uint8> color) 
+			: x(x), y(y), scale(scale), color(color) {}
+		virtual int draw() = 0;
+		virtual int update() = 0;
+};
+
+class Boids : public Object {
+	private:
+		float direction; // [0,2*pi[
+		// x,y coordinates that are inherited represent the middle of the base line
+	public:
+		Boids (float x, float y, int scale, std::tuple<Uint8, Uint8, Uint8, Uint8> color, float direction) 
+		: Object(x,y,scale,color) {
+			this->direction = direction;
 		}
-	}
-}
+
+		int draw() override {
+			// Draws the boid to the screen
+
+			Uint8 r, g, b, a;
+			std::tie(r,g,b,a) = color;
+
+			float orthogonal = direction + M_PI / 2;
+			if (orthogonal > 2*M_PI) orthogonal -= 2*M_PI;
+
+			float delta_x = scale / 2 * std::sinf(orthogonal); // l * sin(PI - theta')
+			float delta_y = - scale / 2 * std::cosf(orthogonal); // l * cos(PI - theta')
+			float delta_x_normal = 1.5*scale*std::sinf(direction);
+			float delta_y_normal = -1.5*scale*std::cosf(direction);
+
+			const std::vector< SDL_Vertex > verts =
+				{
+					SDL_Vertex {SDL_FPoint{x-delta_x, y-delta_y}, SDL_Color{r,g,b,a}, SDL_FPoint{ 0 }},
+					SDL_Vertex {SDL_FPoint{x+delta_x, y+delta_y}, SDL_Color{r,g,b,a}, SDL_FPoint{ 0 }},
+					SDL_Vertex {SDL_FPoint{x+delta_x_normal, y+delta_y_normal}, SDL_Color{r,g,b,a}, SDL_FPoint{ 0 }}
+				};
+			
+			return SDL_RenderGeometry(w.renderer, nullptr, verts.data(), verts.size(), nullptr, 0);
+		}
+
+		int update() override {
+			// Updates the boid
+			return 0;
+		}
+};
 
 void do_render() {
-	SDL_SetRenderDrawColor(g.renderer, 255u, 255u, 255u, SDL_ALPHA_OPAQUE);
-	SDL_RenderClear(g.renderer);
+	// Reset to black screen
+	SDL_SetRenderDrawColor(w.renderer, 0u, 0u, 0u, SDL_ALPHA_OPAQUE);
+	SDL_RenderClear(w.renderer);
 
-	paint_it_s_work(0, 0, 20);
+	for (Object* x : w.sceneObjects){
+		x->draw();
+	}
 
-	SDL_RenderPresent(g.renderer);
+	SDL_RenderPresent(w.renderer);
 }
 
 void do_update() {
+	// Update the scene
+	for (Object* x : w.sceneObjects){
+		x->update();
+	}
+}
 
+void init_scene(){
+	auto color = std::make_tuple<Uint8, Uint8, Uint8, Uint8>(255,0,0,255);
+	Boids * b1 =  new Boids(WIDTH/2, HEIGHT/2, 25, color, 0.5);
+	w.sceneObjects.push_back(b1);
 }
 
 int main(int argc, char ** argv)
 {
-
+	std::srand(time(NULL));
 
 	int status;
 
@@ -59,19 +116,20 @@ int main(int argc, char ** argv)
 		return 1;
 	}
 
-	g.window = SDL_CreateWindow("Ant War",
+	w.window = SDL_CreateWindow("BOIDS",
 			SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 			WIDTH, HEIGHT, SDL_WINDOW_SHOWN);
-	if (not g.window) {
+	if (not w.window) {
 		return 1;
 	}
 
 	// get the default renderer
-	g.renderer = SDL_CreateRenderer(g.window, -1, 0);
-	if (not g.renderer) {
+	w.renderer = SDL_CreateRenderer(w.window, -1, 0);
+	if (not w.renderer) {
 		return 1;
 	}
 
+	init_scene();
 	bool end = false;
 	while (not end) {
 		SDL_Event event;
@@ -81,9 +139,6 @@ int main(int argc, char ** argv)
 				switch (event.window.event) {
 					case SDL_WINDOWEVENT_CLOSE:
 						end = true;
-						break;
-					case SDL_WINDOWEVENT_SIZE_CHANGED:
-						// Should never happen
 						break;
 					default:
 						break;
@@ -113,10 +168,9 @@ int main(int argc, char ** argv)
 		}
 	}
 
-	SDL_DestroyRenderer(g.renderer);
-	SDL_DestroyWindow(g.window);
+	SDL_DestroyRenderer(w.renderer);
+	SDL_DestroyWindow(w.window);
 	SDL_CloseAudio();
 	SDL_Quit();
 	return 0;
 }
-
