@@ -9,6 +9,14 @@
 int const WIDTH = 800;
 int const HEIGHT = 600;
 
+// Boids constants
+const float RAD_STEP = 0.01;
+const float DIST_THRESHOLD = 50;
+const float MAX_SPEED = 3;
+float CENTERING_FACTOR = 0.005; // How much the boid will turn towards the barycenter
+float AVOID_FACTOR = 0.001; // How much the boid will turn away from another boid
+
+
 class Object; // declaration
 
 struct global_t {
@@ -17,9 +25,6 @@ struct global_t {
 
 	// Objects
 	std::vector<Object*> sceneObjects;
-	int N = 0; // Number of boids
-	float bary_x; // Barycenter of boids
-	float bary_y;
 
 	// random
 	std::random_device rd;
@@ -81,8 +86,6 @@ class Boids : public Object {
 
 		void turn_towards(float dir_x, float dir_y) {
 			// Turns the boid progressively towards a direction
-			const float RAD_STEP = 0.05;
-
 			float target = std::atan2(dir_y, dir_x);
 			float direction = std::atan2(vy, vx);
 			float diff = target - direction;
@@ -101,17 +104,62 @@ class Boids : public Object {
 			vy = std::sin(direction)*norm;
 		}
 		void update() override {
+			float force_x = 0, force_y = 0;
+
+			// If the boid is too close to another boid, it will turn away
+			float bary_x = 0;
+			float bary_y = 0;
+			int N = 0;
+			for (Object* obj : w.sceneObjects){
+				if (obj->obstacle) continue;
+				bary_x += obj->x;
+				bary_y += obj->y;
+				N++;
+				if (obj == this) continue;
+
+				float dx = obj->x - x;
+				float dy = obj->y - y;
+				float dist = std::sqrt(dx*dx + dy*dy);
+				if (dist < DIST_THRESHOLD){
+					force_x -= dx * AVOID_FACTOR;
+					force_y -= dy * AVOID_FACTOR;
+				}
+			}
+			bary_x /= N;
+			bary_y /= N;
+
 			// Turn towards the barycenter
-			if (w.N > 1){ 
-				// If there is only 1 boid, it does not make sense to turn towards the barycenter
-				turn_towards(w.bary_x - x, w.bary_y - y);
+			// If there is only 1 boid, it does not make sense to turn towards the barycenter
+			if (N > 1){ 
+				
+				float centerVector_x = bary_x - x;
+				float centerVector_y = bary_y - y;
+				float norm = std::sqrt(centerVector_x*centerVector_x + centerVector_y*centerVector_y);
+				centerVector_x /= norm;
+				centerVector_y /= norm;
+
+				force_x += centerVector_x * CENTERING_FACTOR;
+				force_y += centerVector_y * CENTERING_FACTOR;
 			}
 
 			// Updates the boid's position based on its velocity
+			
+			float dt = 1;
+			vx += force_x * dt;
+			vy += force_y * dt;
+			if (std::sqrt(vx*vx + vy*vy) > MAX_SPEED){
+				float norm = std::sqrt(vx*vx + vy*vy);
+				vx = vx / norm * MAX_SPEED;
+				vy = vy / norm * MAX_SPEED;
+			}
+
+			// printf("Force : %f %f, Speed : %f %f, Speed norm : %f\n", force_x, force_y, vx, vy, std::sqrt(vx*vx + vy*vy));
+			turn_towards(force_x, force_y);
+
         	x += vx;
         	y += vy;
 
-			}
+		}
 };
 
 void do_render() {
@@ -124,10 +172,6 @@ void do_render() {
 		x->draw();
 	}
 
-	// Draw point at barycenter
-	SDL_SetRenderDrawColor(w.renderer, 0u, 255u, 0u, SDL_ALPHA_OPAQUE);
-	SDL_RenderDrawPoint(w.renderer, w.bary_x, w.bary_y);
-
 	SDL_RenderPresent(w.renderer);
 }
 
@@ -135,13 +179,6 @@ void do_update() {
 	// Update the barycenter
 	float sum_x = 0;
 	float sum_y = 0;
-	for (Object* obj : w.sceneObjects){
-		if (obj->obstacle) continue;
-		sum_x += obj->x;
-		sum_y += obj->y;
-	}
-	w.bary_x = sum_x / w.N;
-	w.bary_y = sum_y / w.N;	
 
 	// Update the scene
 	for (Object* x : w.sceneObjects){
@@ -204,9 +241,15 @@ int main(int argc, char ** argv)
 				// Add a boid on left click where the mouse is
 				if (event.button.button == SDL_BUTTON_LEFT){
 					auto color = std::make_tuple<Uint8, Uint8, Uint8, Uint8>(255,0,0,255);
-					Boids * b1 =  new Boids(event.button.x, event.button.y, 25, color, 1., 0.);
+					Boids * b1 =  new Boids(event.button.x, event.button.y, 10, color, 1., 0.);
 					w.sceneObjects.push_back(b1);
-					w.N++;
+				}
+				// If right click all boids are deleted
+				if (event.button.button == SDL_BUTTON_RIGHT){
+					for (Object* x : w.sceneObjects){
+						delete x;
+					}
+					w.sceneObjects.clear();
 				}
 				break;
 			}
