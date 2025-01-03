@@ -6,58 +6,73 @@
 
 #include <SDL2/SDL.h>
 
+// Window constants
 int const WIDTH = 800;
 int const HEIGHT = 600;
 
 // Boids constants
 const float RAD_STEP = 0.01;
 const float DIST_THRESHOLD = 50;
-const float MAX_SPEED = 3;
-float CENTERING_FACTOR = 0.005; // How much the boid will turn towards the barycenter
-float AVOID_FACTOR = 0.001; // How much the boid will turn away from another boid
+const float MAX_SPEED = 10;
+const float CENTERING_FACTOR = 0.005; // How much the boid will turn towards the barycenter
+const float AVOID_FACTOR = 0.001; // How much the boid will turn away from another boid
+const float ALIGNEMENT_FACTOR = 0.001; // How much the boid will align with other boids
+const float TURN_FACTOR = 0.01; // How much the boid will turn away from the screen edges
 
 
+template <typename ColorType>
 class Object; // declaration
+// Type aliases
+using SDLColorType = std::tuple<Uint8, Uint8, Uint8, Uint8>;
+
 
 struct global_t {
 	SDL_Window * window = NULL;
 	SDL_Renderer * renderer = NULL;
 
 	// Objects
-	std::vector<Object*> sceneObjects;
+	std::vector<Object<SDLColorType>*> sceneObjects;
 
 	// random
 	std::random_device rd;
 	std::default_random_engine eng;
 	std::uniform_real_distribution<float> rand;
-
 };
 
 global_t w;
 
 
+template <typename T>
+T distance(T x1, T y1, T x2, T y2) {
+	T dx = x1 - x2;
+	T dy = y1 - y2;
+	return std::sqrt(dx*dx + dy*dy);
+}
+
+
+template <typename ColorType>
 class Object {
 	protected:
 		int scale;
-		std::tuple<Uint8, Uint8, Uint8, Uint8> color;
+		ColorType color;
 	public:
 		bool obstacle;
 		float x;
 		float y;
-		Object (float x, float y, int scale, std::tuple<Uint8, Uint8, Uint8, Uint8> color, bool obstacle) 
+		Object (float x, float y, int scale, ColorType color, bool obstacle) 
 			: x(x), y(y), scale(scale), color(color), obstacle(obstacle) {}
 		virtual int draw() = 0;
 		virtual void update() = 0;
 };
 
-class Boids : public Object {
+class Boids : public Object<SDLColorType> {
 	private:
 		float vx; // Velocity in x direction
     	float vy; // Velocity in y direction
 		// x,y coordinates that are inherited represent the middle of the base line of the triangle
 	public:
-		Boids (float x, float y, int scale, std::tuple<Uint8, Uint8, Uint8, Uint8> color, float vx, float vy) 
-		: Object(x,y,scale,color, false), vx(vx), vy(vy) {}
+		Boids (float x, float y, int scale, SDLColorType color, float vx, float vy) 
+		: Object(x,y,scale,color,false), vx(vx), vy(vy) {}
 
 		int draw() override {
 			// Draws the boid to the screen
@@ -99,34 +114,52 @@ class Boids : public Object {
 				direction -= RAD_STEP;
 			}
 
-			float norm = std::sqrt(vx*vx + vy*vy);
+			float norm = distance(vx,vy,0.f,0.f);
 			vx = std::cos(direction)*norm;
 			vy = std::sin(direction)*norm;
 		}
 		void update() override {
 			float force_x = 0, force_y = 0;
 
-			// If the boid is too close to another boid, it will turn away
+			// Barycenter calculation
 			float bary_x = 0;
 			float bary_y = 0;
+			int total_N = 0;
+			// Alignement calculation
+			float xvel_avg = 0;
+			float yvel_avg = 0;
 			int N = 0;
-			for (Object* obj : w.sceneObjects){
+
+			for (Object * obj : w.sceneObjects){
 				if (obj->obstacle) continue;
 				bary_x += obj->x;
 				bary_y += obj->y;
-				N++;
+				total_N++;
 				if (obj == this) continue;
 
-				float dx = obj->x - x;
-				float dy = obj->y - y;
-				float dist = std::sqrt(dx*dx + dy*dy);
+				float dist = distance(x,y,obj->x,obj->y);
+				// If the boid is too close to another boid, it will turn away
 				if (dist < DIST_THRESHOLD){
-					force_x -= dx * AVOID_FACTOR;
-					force_y -= dy * AVOID_FACTOR;
+					force_x -= (obj->x - x) * AVOID_FACTOR;
+					force_y -= (obj->y - y) * AVOID_FACTOR;
+				}
+				// Else it will attempt to align
+				else {
+					xvel_avg += dynamic_cast<Boids*>(obj)->vx;
+					yvel_avg += dynamic_cast<Boids*>(obj)->vy;
+					N++;		
 				}
 			}
-			bary_x /= N;
-			bary_y /= N;
+			// Barycenter calculation
+			bary_x /= total_N;
+			bary_y /= total_N;
+			// Alignement calculation
+			if (N > 0){
+				xvel_avg /= N;
+				yvel_avg /= N;
+				force_x += (xvel_avg - vx) * ALIGNEMENT_FACTOR;
+				force_y += (yvel_avg - vy) * ALIGNEMENT_FACTOR;
+			}
 
 			// Turn towards the barycenter
 			// If there is only 1 boid, it does not make sense to turn towards the barycenter
@@ -142,25 +175,38 @@ class Boids : public Object {
 				force_y += centerVector_y * CENTERING_FACTOR;
 			}
 
+			// Boids will avoid the screen edges with a 50px margin
+			if (x < 50){
+				force_x += TURN_FACTOR;
+			}
+			if (x > WIDTH - 50){
+				force_x -= TURN_FACTOR;
+			}
+			if (y < 50){
+				force_y += TURN_FACTOR;
+			}
+			if (y > HEIGHT - 50){
+				force_y -= TURN_FACTOR;
+			}
+
+
 			// Updates the boid's position based on its velocity
-			
 			float dt = 1;
 			vx += force_x * dt;
 			vy += force_y * dt;
-			if (std::sqrt(vx*vx + vy*vy) > MAX_SPEED){
-				float norm = std::sqrt(vx*vx + vy*vy);
+			float norm = distance(0.f,0.f,vx,vy);
+			if (norm > MAX_SPEED){
 				vx = vx / norm * MAX_SPEED;
 				vy = vy / norm * MAX_SPEED;
 			}
 
-			// printf("Force : %f %f, Speed : %f %f, Speed norm : %f\n", force_x, force_y, vx, vy, std::sqrt(vx*vx + vy*vy));
 			turn_towards(force_x, force_y);
 
         	x += vx;
         	y += vy;
-
 		}
 };
+
 
 void do_render() {
 	// Reset to black screen
@@ -168,7 +214,7 @@ void do_render() {
 	SDL_RenderClear(w.renderer);
 	
 	// Render the scene
-	for (Object* x : w.sceneObjects){
+	for (Object<SDLColorType>* x : w.sceneObjects){
 		x->draw();
 	}
 
@@ -176,12 +222,8 @@ void do_render() {
 }
 
 void do_update() {
-	// Update the barycenter
-	float sum_x = 0;
-	float sum_y = 0;
-
 	// Update the scene
-	for (Object* x : w.sceneObjects){
+	for (Object<SDLColorType>* x : w.sceneObjects){
 		x->update();
 	}
 }
@@ -246,7 +288,7 @@ int main(int argc, char ** argv)
 				}
 				// If right click all boids are deleted
 				if (event.button.button == SDL_BUTTON_RIGHT){
-					for (Object* x : w.sceneObjects){
+					for (Object<SDLColorType>* x : w.sceneObjects){
 						delete x;
 					}
 					w.sceneObjects.clear();
