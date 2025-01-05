@@ -13,12 +13,14 @@ int const HEIGHT = 600;
 // Boids constants
 const float RAD_STEP = 0.01;
 const float DIST_THRESHOLD = 50;
-const float MAX_SPEED = 10;
+const float MAX_SPEED = 3;
 const float CENTERING_FACTOR = 0.005; // How much the boid will turn towards the barycenter
 const float AVOID_FACTOR = 0.001; // How much the boid will turn away from another boid
-const float ALIGNEMENT_FACTOR = 0.001; // How much the boid will align with other boids
-const float TURN_FACTOR = 0.01; // How much the boid will turn away from the screen edges
+const float ALIGNEMENT_FACTOR = 0.01; // How much the boid will align with other boids
+const float TURN_FACTOR = 0.05; // How much the boid will turn away from the screen edges
+const float BOIDS_SIZE = 5;
 
+const float OBSTACLES_SIZE = 10;
 
 template <typename ColorType>
 class Object; // declaration
@@ -63,6 +65,23 @@ class Object {
 			: x(x), y(y), scale(scale), color(color), obstacle(obstacle) {}
 		virtual int draw() = 0;
 		virtual void update() = 0;
+};
+
+class Obstacles : public Object<SDLColorType> {
+	public:
+		Obstacles (float x, float y, int scale, SDLColorType color) : Object(x,y,scale,color,true) {}
+
+		int draw() override {
+			// Draws the obstacle to the screen
+			Uint8 r, g, b, a;
+			std::tie(r,g,b,a) = color;
+
+			SDL_Rect rect = {(int)(x-scale/2), (int)(y-scale/2), scale, scale};
+			SDL_SetRenderDrawColor(w.renderer, r, g, b, a);
+			return SDL_RenderFillRect(w.renderer, &rect);
+		}
+
+		void update() override {}
 };
 
 class Boids : public Object<SDLColorType> {
@@ -131,7 +150,16 @@ class Boids : public Object<SDLColorType> {
 			int N = 0;
 
 			for (Object * obj : w.sceneObjects){
-				if (obj->obstacle) continue;
+				if (obj->obstacle) {
+					// Turn away from obstacle
+					float dist = distance(x,y,obj->x,obj->y);
+					if (dist < DIST_THRESHOLD){
+						force_x -= (obj->x - x) * AVOID_FACTOR;
+						force_y -= (obj->y - y) * AVOID_FACTOR;
+					}
+					continue;
+				};
+
 				bary_x += obj->x;
 				bary_y += obj->y;
 				total_N++;
@@ -176,16 +204,16 @@ class Boids : public Object<SDLColorType> {
 			}
 
 			// Boids will avoid the screen edges with a 50px margin
-			if (x < 50){
+			if (x < 100){
 				force_x += TURN_FACTOR;
 			}
-			if (x > WIDTH - 50){
+			if (x > WIDTH - 100){
 				force_x -= TURN_FACTOR;
 			}
-			if (y < 50){
+			if (y < 100){
 				force_y += TURN_FACTOR;
 			}
-			if (y > HEIGHT - 50){
+			if (y > HEIGHT - 100){
 				force_y -= TURN_FACTOR;
 			}
 
@@ -261,7 +289,7 @@ int main(int argc, char ** argv)
 	bool end = false;
 	while (not end) {
 		SDL_Event event;
-		if (SDL_WaitEventTimeout(&event, 20)) {
+		if (SDL_WaitEventTimeout(&event, 10)) {
 			switch (event.type) {
 			case SDL_WINDOWEVENT:
 				switch (event.window.event) {
@@ -276,6 +304,12 @@ int main(int argc, char ** argv)
 				if (event.key.keysym.sym == SDLK_ESCAPE) {
 					end = true;
 				}
+				if (event.key.keysym.sym == SDLK_SPACE){
+					for (Object<SDLColorType>* x : w.sceneObjects){
+						delete x;
+					}
+					w.sceneObjects.clear();
+				}
 				break;
 			case SDL_KEYUP:
 				break;
@@ -283,15 +317,14 @@ int main(int argc, char ** argv)
 				// Add a boid on left click where the mouse is
 				if (event.button.button == SDL_BUTTON_LEFT){
 					auto color = std::make_tuple<Uint8, Uint8, Uint8, Uint8>(255,0,0,255);
-					Boids * b1 =  new Boids(event.button.x, event.button.y, 10, color, 1., 0.);
-					w.sceneObjects.push_back(b1);
+					Boids * b =  new Boids(event.button.x, event.button.y, BOIDS_SIZE, color, 1., 0.);
+					w.sceneObjects.push_back(b);
 				}
 				// If right click all boids are deleted
 				if (event.button.button == SDL_BUTTON_RIGHT){
-					for (Object<SDLColorType>* x : w.sceneObjects){
-						delete x;
-					}
-					w.sceneObjects.clear();
+					auto color = std::make_tuple<Uint8, Uint8, Uint8, Uint8>(0,255,0,255);
+					Obstacles * obst =  new Obstacles(event.button.x, event.button.y, OBSTACLES_SIZE, color);
+					w.sceneObjects.push_back(obst);
 				}
 				break;
 			}
