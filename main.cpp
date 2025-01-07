@@ -21,6 +21,7 @@ const float TURN_FACTOR = 0.05; // How much the boid will turn away from the scr
 const float BOIDS_SIZE = 5;
 
 const float OBSTACLES_SIZE = 10;
+const float SELECT_DISTANCE = 10;
 
 template <typename ColorType>
 class Object; // declaration
@@ -34,6 +35,9 @@ struct global_t {
 
 	// Objects
 	std::vector<Object<SDLColorType>*> sceneObjects;
+
+	// Running
+	bool running = true;
 
 	// random
 	std::random_device rd;
@@ -58,11 +62,12 @@ class Object {
 		int scale;
 		ColorType color;
 	public:
+		bool selected;
 		bool obstacle;
 		float x;
 		float y;
 		Object (float x, float y, int scale, ColorType color, bool obstacle) 
-			: x(x), y(y), scale(scale), color(color), obstacle(obstacle) {}
+			: x(x), y(y), scale(scale), color(color), obstacle(obstacle), selected(false) {}
 		virtual int draw() = 0;
 		virtual void update() = 0;
 };
@@ -74,7 +79,7 @@ class Obstacles : public Object<SDLColorType> {
 		int draw() override {
 			// Draws the obstacle to the screen
 			Uint8 r, g, b, a;
-			std::tie(r,g,b,a) = color;
+			std::tie(r,g,b,a) = !selected ? color : std::make_tuple<Uint8, Uint8, Uint8, Uint8>(255,255,0,255);
 
 			SDL_Rect rect = {(int)(x-scale/2), (int)(y-scale/2), scale, scale};
 			SDL_SetRenderDrawColor(w.renderer, r, g, b, a);
@@ -97,7 +102,7 @@ class Boids : public Object<SDLColorType> {
 			// Draws the boid to the screen
 
 			Uint8 r, g, b, a;
-			std::tie(r,g,b,a) = color;
+			std::tie(r,g,b,a) = !selected ? color : std::make_tuple<Uint8, Uint8, Uint8, Uint8>(0,255,255,255);
 
 			float direction = std::atan2(vy, vx);
 			float orthogonal = direction + M_PI / 2;
@@ -251,6 +256,7 @@ void do_render() {
 
 void do_update() {
 	// Update the scene
+	if (!w.running) return;
 	for (Object<SDLColorType>* x : w.sceneObjects){
 		x->update();
 	}
@@ -304,11 +310,19 @@ int main(int argc, char ** argv)
 				if (event.key.keysym.sym == SDLK_ESCAPE) {
 					end = true;
 				}
-				if (event.key.keysym.sym == SDLK_SPACE){
+				if (event.key.keysym.sym == SDLK_BACKSPACE){
+					// Delete all objects
 					for (Object<SDLColorType>* x : w.sceneObjects){
-						delete x;
+						if (!x->obstacle){
+							delete x;
+						}
 					}
-					w.sceneObjects.clear();
+						w.sceneObjects.clear();
+					}
+				if (event.key.keysym.sym == SDLK_SPACE){
+					// Pause the simulation
+					w.running = !w.running;
+
 				}
 				break;
 			case SDL_KEYUP:
@@ -316,9 +330,21 @@ int main(int argc, char ** argv)
 			case SDL_MOUSEBUTTONDOWN:					
 				// Add a boid on left click where the mouse is
 				if (event.button.button == SDL_BUTTON_LEFT){
-					auto color = std::make_tuple<Uint8, Uint8, Uint8, Uint8>(255,0,0,255);
-					Boids * b =  new Boids(event.button.x, event.button.y, BOIDS_SIZE, color, 1., 0.);
-					w.sceneObjects.push_back(b);
+					bool found = false;
+					// Loop through objects and toggle selected if close enough
+					for (Object<SDLColorType>* x : w.sceneObjects){
+						if (distance((float)event.button.x, (float)event.button.y, x->x, x->y) < SELECT_DISTANCE){
+							x->selected = !x->selected;
+							found = true;
+							printf("Selected\n");
+							break;
+						}
+					}
+					if (!found) {
+						auto color = std::make_tuple<Uint8, Uint8, Uint8, Uint8>(255,0,0,255);
+						Boids * b =  new Boids(event.button.x, event.button.y, BOIDS_SIZE, color, 1., 0.);
+						w.sceneObjects.push_back(b);
+					}
 				}
 				// If right click all boids are deleted
 				if (event.button.button == SDL_BUTTON_RIGHT){
