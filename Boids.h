@@ -67,7 +67,7 @@ class Object {
 		virtual void update() = 0;
 };
 
-class Obstacles : public Object<SDLColorType> {
+class Obstacles : public virtual Object<SDLColorType> {
 	public:
 		Obstacles (float x, float y, int scale, SDLColorType color) : Object(x,y,scale,color,true) {}
 
@@ -84,7 +84,7 @@ class Obstacles : public Object<SDLColorType> {
 		void update() override {}
 };
 
-class Boids : public Object<SDLColorType> {
+class Boids : public virtual Object<SDLColorType> {
 	private:
 		float vx; // Velocity in x direction
     	float vy; // Velocity in y direction
